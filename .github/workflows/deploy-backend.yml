@@ -1,0 +1,36 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Sync Backend Files to VPS
+        run: |
+          # Sync everything except node_modules and ignore .env from git to be safe
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" rsync -avz --delete --exclude 'node_modules/' --exclude '.env' -e "ssh -o StrictHostKeyChecking=no" ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/fresco/backend/
+
+      - name: Setup Backend Environment & Zero-Downtime Reload
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /var/www/fresco/backend
+            # Safely create the non-git .env file directly on the VM
+            echo "${{ secrets.BACKEND_ENV_FILE }}" > .env
+            npm install --production
+            
+            # Start/Reload server.js natively via PM2 using cluster mode
+            pm2 reload fresco-backend || pm2 start server.js --name "fresco-backend" -i max --env production
+            pm2 save
