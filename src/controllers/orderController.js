@@ -1,9 +1,11 @@
 const Order = require('../models/Order');
+const User = require('../models/User');
 const Product = require('../models/Product');
 const Coupon = require('../models/Coupon');
 const mongoose = require('mongoose');
 const { isAdminRole } = require('../middleware/auth');
 const { evaluateOrderPricing } = require('../services/offers');
+const { sendOrderCreatedEmailNotifications } = require('../services/brevoEmail');
 
 const statusMap = {
     pending: 'BOOKING_CONFIRMED',
@@ -175,6 +177,7 @@ exports.createOrder = async (req, res) => {
             endDate,
         } = req.body;
         const userId = req.user.userId;
+        const userProfile = await User.findById(userId).select('name email mobileNumber').lean();
 
         const { subtotal: calculatedSubtotal, normalizedItems } = await computeSubtotalFromProducts(products);
         const clientSubtotal = Math.max(0, Number(subtotalAmount || 0));
@@ -208,8 +211,12 @@ exports.createOrder = async (req, res) => {
             deliveryAddress: normalizedAddress,
             productName: productName ? String(productName).trim() : undefined,
             productImage: productImage ? String(productImage).trim() : undefined,
-            username: username ? String(username).trim() : undefined,
-            mobileNumber: mobileNumber ? String(mobileNumber).trim() : undefined,
+            username: username ? String(username).trim() : userProfile?.name ? String(userProfile.name).trim() : undefined,
+            mobileNumber: mobileNumber
+                ? String(mobileNumber).trim()
+                : userProfile?.mobileNumber
+                    ? String(userProfile.mobileNumber).trim()
+                    : undefined,
             gender: gender ? String(gender).trim() : undefined,
             country: country ? String(country).trim() : undefined,
             paymentMethod: paymentMethod ? String(paymentMethod).trim() : undefined,
@@ -239,6 +246,23 @@ exports.createOrder = async (req, res) => {
 
         if (pricing.applied?.source === 'COUPON' && pricing.couponDoc) {
             await Coupon.updateOne({ _id: pricing.couponDoc._id }, { $inc: { usedCount: 1 } });
+        }
+
+        const totalItems = normalizedItems.reduce(
+            (sum, item) => sum + Math.max(1, Number(item?.quantity || 1)),
+            0
+        );
+
+        try {
+            await sendOrderCreatedEmailNotifications({
+                order,
+                customerName: order.username || userProfile?.name || 'Customer',
+                customerEmail: userProfile?.email || '',
+                customerPhone: order.mobileNumber || userProfile?.mobileNumber || '',
+                totalItems,
+            });
+        } catch (emailError) {
+            console.error('sendOrderCreatedEmailNotifications failed:', emailError?.message || emailError);
         }
 
         res.status(201).json(toLegacyOrder(order));
