@@ -40,15 +40,20 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             mkdir -p /var/www/fresco/backend
-            if ! command -v rsync >/dev/null 2>&1; then
-              echo "rsync is not installed on VM. Install it once: sudo apt-get update && sudo apt-get install -y rsync" >&2
-              exit 1
-            fi
+            touch /var/www/fresco/backend/.write-test && rm -f /var/www/fresco/backend/.write-test
 
       - name: Sync Backend Files to VPS
         run: |
-          # Sync everything except node_modules and ignore .env from git to be safe
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" rsync -avz --delete --exclude 'node_modules/' --exclude '.env' -e "ssh -o StrictHostKeyChecking=no" "${BACKEND_SOURCE}/" ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/fresco/backend/
+            # Use tar-over-ssh for robust file sync without remote rsync dependency.
+            cd "${BACKEND_SOURCE}"
+            tar \
+              --exclude='./node_modules' \
+              --exclude='./.git' \
+              --exclude='./.github' \
+              --exclude='./.env' \
+              -czf - . \
+              | sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+                "mkdir -p /var/www/fresco/backend && rm -rf /var/www/fresco/backend/* && tar -xzf - -C /var/www/fresco/backend"
 
       - name: Setup Backend Environment & Zero-Downtime Reload
         uses: appleboy/ssh-action@master
