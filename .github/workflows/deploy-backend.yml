@@ -8,9 +8,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Validate Required Secrets
         run: |
           test -n "${{ secrets.SSH_HOST }}" || { echo "Missing required secret: SSH_HOST" >&2; exit 1; }
@@ -18,59 +15,45 @@ jobs:
           test -n "${{ secrets.SSH_PASSWORD }}" || { echo "Missing required secret: SSH_PASSWORD" >&2; exit 1; }
           test -n "${{ secrets.BACKEND_ENV_FILE }}" || { echo "Missing required secret: BACKEND_ENV_FILE" >&2; exit 1; }
 
-      - name: Resolve Backend Source Directory
-        run: |
-          if [ -f backend/package.json ]; then
-            echo "BACKEND_SOURCE=backend" >> "$GITHUB_ENV"
-          elif [ -f package.json ]; then
-            echo "BACKEND_SOURCE=." >> "$GITHUB_ENV"
-          else
-            echo "Could not find backend/package.json or package.json" >&2
-            exit 1
-          fi
-
-      - name: Install sshpass
-        run: sudo apt-get update && sudo apt-get install -y sshpass
-
-      - name: Preflight VM Sync Requirements
+      - name: Deploy Backend On VM
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
-            mkdir -p /var/www/fresco/backend
-            touch /var/www/fresco/backend/.write-test && rm -f /var/www/fresco/backend/.write-test
+            set -e
 
-      - name: Sync Backend Files to VPS
-        run: |
-            # Use tar-over-ssh for robust file sync without remote rsync dependency.
-            cd "${BACKEND_SOURCE}"
-            tar \
-              --exclude='./node_modules' \
-              --exclude='./.git' \
-              --exclude='./.github' \
-              --exclude='./.env' \
-              -czf - . \
-              | sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-                "mkdir -p /var/www/fresco/backend && rm -rf /var/www/fresco/backend/* && tar -xzf - -C /var/www/fresco/backend"
-
-      - name: Setup Backend Environment & Zero-Downtime Reload
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          script: |
-            cd /var/www/fresco/backend
-            # Backward compatibility in case older sync created /backend/backend layout
-            if [ -f backend/package.json ]; then
-              cd backend
+            if ! command -v git >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y git
             fi
+
+            if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+              echo "Node.js/npm missing on VM. Install Node 20 and rerun workflow." >&2
+              exit 1
+            fi
+
+            mkdir -p /var/www/fresco
+
+            if [ ! -d /var/www/fresco/backend/.git ]; then
+              rm -rf /var/www/fresco/backend
+              git clone https://github.com/veeru2005/fresco-backend.git /var/www/fresco/backend
+            fi
+
+            cd /var/www/fresco/backend
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
 
             # Safely create the non-git .env file directly on the VM
             echo "${{ secrets.BACKEND_ENV_FILE }}" > .env
+
             npm install --omit=dev
+
+            if ! command -v pm2 >/dev/null 2>&1; then
+              sudo npm install -g pm2
+            fi
 
             # Prefer PM2 ecosystem when available, fallback to direct server.js startup.
             if [ -f ecosystem.config.js ]; then
