@@ -3,8 +3,8 @@ module.exports = {
     {
       name: "fresco-backend",
       script: "./server.js",
-      instances: "max", // Uses all available CPU cores on the VM
-      exec_mode: "cluster", // Enables Node.js clustering for 150+ concurrent users
+      instances: 1,
+      exec_mode: "fork",
       env: {
         NODE_ENV: "development",
       },
