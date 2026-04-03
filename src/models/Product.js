@@ -6,7 +6,7 @@ const productSchema = new mongoose.Schema(
         type: { type: String, required: true, enum: ['fruit', 'vegetable', 'herb'] },
         price: { type: Number, required: true }, // price per unit (e.g. per kg)
         quantity: { type: Number, required: true, default: 1 },
-        unit: { type: String, required: true, default: 'kg' },
+        unit: { type: String, required: true, default: 'kg', enum: ['kg', 'gm', 'dozen', 'half dozen', 'liter', 'ml'] },
         image: { type: String, required: true },
         description: { type: String, required: true },
         available: { type: Boolean, default: true },
