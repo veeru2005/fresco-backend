@@ -10,11 +10,12 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const allowedOrigins = [
-    'http://localhost:5173',
-    'https://your-frontend-domain.pages.dev',
-    'https://your-custom-domain.com',
-];
+const defaultAllowedOrigins = ['http://localhost:5173', 'https://frescoo.tech', 'https://www.frescoo.tech'];
+const allowedOrigins = String(process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const effectiveAllowedOrigins = allowedOrigins.length > 0 ? allowedOrigins : defaultAllowedOrigins;
 const isProduction = process.env.NODE_ENV === 'production';
 
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 24) {
@@ -37,7 +38,7 @@ app.use(
 app.use(
     cors({
         origin: (origin, callback) => {
-            if (!origin || allowedOrigins.includes(origin)) {
+            if (!origin || effectiveAllowedOrigins.includes(origin)) {
                 return callback(null, true);
             }
             return callback(new Error('CORS origin denied'));

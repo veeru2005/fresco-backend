@@ -34,22 +34,31 @@ jobs:
               exit 1
             fi
 
-            mkdir -p /var/www/fresco
+            mkdir -p /var/www/fresco/backend
 
-            if [ ! -d /var/www/fresco/backend/.git ]; then
-              rm -rf /var/www/fresco/backend
-              git clone https://github.com/veeru2005/fresco-backend.git /var/www/fresco/backend
-            fi
+            BUILD_DIR="$(mktemp -d /tmp/fresco-backend-XXXXXX)"
+            cleanup() {
+              rm -rf "$BUILD_DIR"
+            }
+            trap cleanup EXIT
+
+            git clone --depth 1 --branch main https://github.com/veeru2005/fresco-backend.git "$BUILD_DIR"
+
+            # Keep runtime directory clean and copy only application files.
+            find /var/www/fresco/backend -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+            tar -C "$BUILD_DIR" --exclude='.git' --exclude='.github' --exclude='.env' --exclude='.DS_Store' -cf - . | tar -xf - -C /var/www/fresco/backend
 
             cd /var/www/fresco/backend
-            git fetch origin main
-            git checkout main
-            git pull --ff-only origin main
 
             # Safely create the non-git .env file directly on the VM
             echo "${{ secrets.BACKEND_ENV_FILE }}" > .env
+            chmod 600 .env
 
-            npm install --omit=dev
+            if [ -f package-lock.json ]; then
+              npm ci --omit=dev
+            else
+              npm install --omit=dev
+            fi
 
             if ! command -v pm2 >/dev/null 2>&1; then
               sudo npm install -g pm2
