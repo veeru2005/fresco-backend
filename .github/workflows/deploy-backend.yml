@@ -11,6 +11,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Validate Required Secrets
+        run: |
+          test -n "${{ secrets.SSH_HOST }}" || { echo "Missing required secret: SSH_HOST" >&2; exit 1; }
+          test -n "${{ secrets.SSH_USER }}" || { echo "Missing required secret: SSH_USER" >&2; exit 1; }
+          test -n "${{ secrets.SSH_PASSWORD }}" || { echo "Missing required secret: SSH_PASSWORD" >&2; exit 1; }
+          test -n "${{ secrets.BACKEND_ENV_FILE }}" || { echo "Missing required secret: BACKEND_ENV_FILE" >&2; exit 1; }
+
       - name: Resolve Backend Source Directory
         run: |
           if [ -f backend/package.json ]; then
@@ -24,6 +31,19 @@ jobs:
 
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Preflight VM Sync Requirements
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            mkdir -p /var/www/fresco/backend
+            if ! command -v rsync >/dev/null 2>&1; then
+              echo "rsync is not installed on VM. Install it once: sudo apt-get update && sudo apt-get install -y rsync" >&2
+              exit 1
+            fi
 
       - name: Sync Backend Files to VPS
         run: |
