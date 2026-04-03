@@ -11,6 +11,16 @@ const normalizeEmail = (email) =>
         .toLowerCase();
 
 const normalizeMobileNumber = (value) => String(value || '').trim().replace(/\D/g, '');
+const SERVICE_PINCODES_BY_CITY = Object.freeze({
+    mangalagiri: ['522503'],
+    vadeswaram: ['522502', '522302'],
+    'kl university': ['522502', '522302'],
+});
+const normalizeServiceLocation = (value) => String(value || '').trim().toLowerCase();
+const getAllowedPincodesForCity = (city) => SERVICE_PINCODES_BY_CITY[normalizeServiceLocation(city)] || [];
+const isAllowedServiceLocation = (city) => getAllowedPincodesForCity(city).length > 0;
+const isAllowedPincodeForCity = (city, pincode) =>
+    getAllowedPincodesForCity(city).includes(String(pincode || '').trim());
 
 const customerOnlyFilter = {
     $and: [
@@ -66,6 +76,8 @@ exports.upsertUserProfile = async (req, res) => {
     try {
         const { fullName, email, mobileNumber, address, city, state, pincode, gender, country } = req.body;
         const isSuperAdmin = req.user.role === 'super-admin';
+        const normalizedCity = String(city || '').trim();
+        const normalizedPincode = String(pincode || '').trim();
 
         const currentUser = await User.findById(req.user.userId).select('email mobileNumber');
         if (!currentUser) {
@@ -95,13 +107,28 @@ exports.upsertUserProfile = async (req, res) => {
             }
         }
 
+        if (!isAllowedServiceLocation(normalizedCity)) {
+            return res.status(400).json({ error: 'City must be one of Mangalagiri, Vadeswaram, or KL University.' });
+        }
+
+        if (!/^\d{6}$/.test(normalizedPincode)) {
+            return res.status(400).json({ error: 'Please provide a valid 6-digit pincode.' });
+        }
+
+        if (!isAllowedPincodeForCity(normalizedCity, normalizedPincode)) {
+            const allowedPincodes = getAllowedPincodesForCity(normalizedCity);
+            return res.status(400).json({
+                error: `Pincode must be ${allowedPincodes.join(', ')} for ${normalizedCity}.`,
+            });
+        }
+
         const updatePayload = {
             fullName: (fullName || '').trim(),
             mobileNumber: normalizedMobileNumber,
             address: (address || '').trim(),
-            city: (city || '').trim(),
+            city: normalizedCity,
             state: (state || '').trim(),
-            pincode: (pincode || '').trim(),
+            pincode: normalizedPincode,
             gender: (gender || '').trim(),
             country: (country || '').trim(),
         };

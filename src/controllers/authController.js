@@ -7,6 +7,12 @@ require('dotenv').config();
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+const TOKEN_EXPIRES_IN = '12h';
+const SERVICE_PINCODES_BY_CITY = Object.freeze({
+    mangalagiri: ['522503'],
+    vadeswaram: ['522502', '522302'],
+    'kl university': ['522502', '522302'],
+});
 
 const normalizeEmail = (email) =>
     String(email || '')
@@ -49,8 +55,39 @@ const markLoginActivity = (user, req) => {
 };
 
 const sanitizeText = (value) => String(value || '').trim();
+const normalizeServiceLocation = (value) => sanitizeText(value).toLowerCase();
 
 const normalizeMobileNumber = (value) => sanitizeText(value).replace(/\D/g, '');
+
+const getAllowedPincodesForCity = (city) => {
+    const normalizedCity = normalizeServiceLocation(city);
+    return SERVICE_PINCODES_BY_CITY[normalizedCity] || [];
+};
+
+const isAllowedServiceLocation = (city) => getAllowedPincodesForCity(city).length > 0;
+
+const isAllowedPincodeForCity = (city, pincode) =>
+    getAllowedPincodesForCity(city).includes(sanitizeText(pincode));
+
+const getLocationValidationError = (profile = {}) => {
+    const hasLocationData = Boolean(profile.city || profile.pincode);
+    if (!hasLocationData) return null;
+
+    if (!isAllowedServiceLocation(profile.city)) {
+        return 'City must be one of Mangalagiri, Vadeswaram, or KL University.';
+    }
+
+    if (!/^\d{6}$/.test(sanitizeText(profile.pincode))) {
+        return 'Please provide a valid 6-digit pincode.';
+    }
+
+    if (!isAllowedPincodeForCity(profile.city, profile.pincode)) {
+        const allowedPincodes = getAllowedPincodesForCity(profile.city);
+        return `Pincode must be ${allowedPincodes.join(', ')} for ${profile.city}.`;
+    }
+
+    return null;
+};
 
 const normalizeProfileFields = (input = {}) => ({
     fullName: sanitizeText(input.fullName || input.name),
@@ -122,6 +159,11 @@ exports.register = async (req, res) => {
         if (!safeName || !normalizedEmail || !password) {
             return res.status(400).json({ error: 'username, email and password are required' });
         }
+
+        const locationValidationError = getLocationValidationError(profileFields);
+        if (locationValidationError) {
+            return res.status(400).json({ error: locationValidationError });
+        }
         
         let existingUser = await User.findOne({ email: normalizedEmail });
         
@@ -150,7 +192,7 @@ exports.register = async (req, res) => {
                 existingUser.lastLoginUserAgent = req.headers['user-agent'] || '';
                 
                 await existingUser.save();
-                const token = jwt.sign({ userId: existingUser._id, role: existingUser.role }, JWT_SECRET, { expiresIn: '1d' });
+                const token = jwt.sign({ userId: existingUser._id, role: existingUser.role }, JWT_SECRET, { expiresIn: TOKEN_EXPIRES_IN });
                 return res.status(200).json(buildAuthResponse(existingUser, token));
             }
             return res.status(400).json({ error: 'User already exists' });
@@ -183,7 +225,7 @@ exports.register = async (req, res) => {
         });
         await user.save();
 
-        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
+        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: TOKEN_EXPIRES_IN });
         res.status(201).json(buildAuthResponse(user, token));
     } catch (error) {
         if (error?.code === 11000) {
@@ -225,7 +267,7 @@ exports.login = async (req, res) => {
         markLoginActivity(user, req);
         await user.save();
 
-        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
+        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: TOKEN_EXPIRES_IN });
         res.status(200).json(buildAuthResponse(user, token));
     } catch (error) {
         res.status(500).json({ error: 'Error logging in' });
@@ -281,6 +323,11 @@ exports.googleAuth = async (req, res) => {
             return res.status(400).json({
                 error: 'Please provide fullName, mobileNumber, address, city, state, pincode, gender, and country to complete signup.',
             });
+        }
+
+        const locationValidationError = getLocationValidationError(profileFields);
+        if (locationValidationError) {
+            return res.status(400).json({ error: locationValidationError });
         }
 
         if (!user) {
@@ -339,7 +386,7 @@ exports.googleAuth = async (req, res) => {
             await user.save();
         }
 
-        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
+        const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: TOKEN_EXPIRES_IN });
         return res.status(200).json(buildAuthResponse(user, token));
     } catch (error) {
         if (error?.code === 11000) {
