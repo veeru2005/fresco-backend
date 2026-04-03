@@ -44,6 +44,15 @@ const normalizeOrderStatus = (status, orderStatus) => {
 };
 
 const toLegacyOrder = (orderDoc) => {
+    const userProfile = orderDoc?.user || {};
+    const userCity = String(userProfile.city || '').trim();
+    const userState = String(userProfile.state || '').trim();
+    const userPincode = String(userProfile.pincode || '').trim();
+    const userAddressLine = String(userProfile.address || '').trim();
+    const userCityStatePincode = [userCity, userState, userPincode].filter(Boolean).join(', ');
+    const fallbackDeliveryAddress = [userAddressLine, userCityStatePincode].filter(Boolean).join(', ');
+    const deliveryAddress = String(orderDoc.deliveryAddress || fallbackDeliveryAddress || '').trim();
+
     const orderedItems = Array.isArray(orderDoc.products)
         ? orderDoc.products
             .map((item) => ({
@@ -64,10 +73,11 @@ const toLegacyOrder = (orderDoc) => {
         orderId: orderDoc.orderId || orderDoc._id,
         productName: orderDoc.productName || orderedItems?.[0]?.name || 'Product',
         productImage: orderDoc.productImage || orderedItems?.[0]?.image || '',
-        username: orderDoc.username || orderDoc.user?.name || 'user',
-        mobileNumber: orderDoc.mobileNumber || '',
-        gender: orderDoc.gender || '',
-        country: orderDoc.country || '',
+        username: orderDoc.username || userProfile.fullName || userProfile.name || 'user',
+        mobileNumber: orderDoc.mobileNumber || userProfile.mobileNumber || '',
+        gender: orderDoc.gender || userProfile.gender || '',
+        country: orderDoc.country || userProfile.country || '',
+        fullName: userProfile.fullName || orderDoc.username || userProfile.name || '',
         paymentAmount: orderDoc.totalAmount,
         subtotalAmount: Number(orderDoc.subtotalAmount || 0),
         deliveryCharge: Number(orderDoc.deliveryCharge || 0),
@@ -83,8 +93,11 @@ const toLegacyOrder = (orderDoc) => {
         totalAmount: orderDoc.totalAmount,
         totalItems,
         orderedItems,
-        address: orderDoc.deliveryAddress,
-        deliveryAddress: orderDoc.deliveryAddress,
+        address: deliveryAddress,
+        deliveryAddress,
+        city: userCity,
+        state: userState,
+        pincode: userPincode,
         startDate: orderDoc.startDate || orderDoc.createdAt,
         endDate: orderDoc.endDate || orderDoc.createdAt,
         deliveredDate: orderDoc.deliveredDate || null,
@@ -324,7 +337,7 @@ exports.getAllOrders = async (req, res) => {
     try {
         const orders = await Order.find()
             .sort({ createdAt: -1 })
-            .populate('user', 'name email')
+            .populate('user', 'name email fullName mobileNumber address city state pincode gender country')
             .populate('products.product');
 
         await ensurePublicOrderIds(orders);
