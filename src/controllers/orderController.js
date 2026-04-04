@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const { isAdminRole } = require('../middleware/auth');
 const { evaluateOrderPricing } = require('../services/offers');
 const { sendOrderCreatedEmailNotifications } = require('../services/brevoEmail');
+const { DEFAULT_UNIT, getProductPricingOptions, getSelectedPricingOption } = require('../services/pricing');
 
 const statusMap = {
     pending: 'BOOKING_CONFIRMED',
@@ -70,14 +71,21 @@ const toLegacyOrder = (orderDoc) => {
 
     const orderedItems = Array.isArray(orderDoc.products)
         ? orderDoc.products
-            .map((item) => ({
-                productId: item?.product?._id || item?.product || null,
-                name: item?.product?.name || 'Product',
-                image: item?.product?.image || '',
-                quantity: Number(item?.quantity || 1),
-                unitPrice: Number(item?.product?.price || 0),
-                itemAmount: Number(item?.product?.price || 0) * Math.max(1, Number(item?.quantity || 1)),
-            }))
+            .map((item) => {
+                const quantity = Math.max(1, Number(item?.quantity || 1));
+                const unitPrice = Number((item?.unitPrice ?? item?.product?.price) || 0);
+                const unit = String(item?.unit || item?.product?.unit || DEFAULT_UNIT);
+
+                return {
+                    productId: item?.product?._id || item?.product || null,
+                    name: item?.product?.name || 'Product',
+                    image: item?.product?.image || '',
+                    quantity,
+                    unit,
+                    unitPrice,
+                    itemAmount: unitPrice * quantity,
+                };
+            })
             .filter((item) => item.productId)
         : [];
 
@@ -171,22 +179,29 @@ const computeSubtotalFromProducts = async (products) => {
         return { subtotal: 0, normalizedItems: [] };
     }
 
-    const productDocs = await Product.find({ _id: { $in: productIds } }).select('_id price');
-    const productMap = new Map(productDocs.map((doc) => [String(doc._id), Number(doc.price || 0)]));
+    const productDocs = await Product.find({ _id: { $in: productIds } }).select('_id price unit pricingOptions');
+    const productMap = new Map(productDocs.map((doc) => [String(doc._id), doc]));
 
     const normalizedItems = normalizedProducts
         .map((item) => {
             const productId = String(item?.product || '').trim();
-            if (!productMap.has(productId)) return null;
+            const productDoc = productMap.get(productId);
+            if (!productDoc) return null;
+
+            const pricingOptions = getProductPricingOptions(productDoc);
+            const selectedPricing = getSelectedPricingOption({ pricingOptions, price: productDoc.price, unit: productDoc.unit }, item?.unit);
+
             return {
                 product: productId,
                 quantity: clampQuantity(item?.quantity),
+                unit: selectedPricing?.unit || DEFAULT_UNIT,
+                unitPrice: Number(selectedPricing?.price || 0),
             };
         })
         .filter(Boolean);
 
     const subtotal = normalizedItems.reduce((sum, item) => {
-        const unitPrice = Number(productMap.get(String(item.product)) || 0);
+        const unitPrice = Number(item.unitPrice || 0);
         return sum + unitPrice * Number(item.quantity || 1);
     }, 0);
 

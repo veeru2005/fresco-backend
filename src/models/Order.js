@@ -29,6 +29,8 @@ const orderSchema = new mongoose.Schema(
             {
                 product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
                 quantity: { type: Number, required: true },
+                unit: { type: String, default: '1 kg' },
+                unitPrice: { type: Number, default: 0 },
             },
         ],
         subtotalAmount: { type: Number, default: 0 },

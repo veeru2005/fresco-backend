@@ -286,7 +286,10 @@ exports.getAdminDashboardStats = async (req, res) => {
 
 exports.getAdminCustomers = async (req, res) => {
     try {
-        const customers = await User.find(customerOnlyFilter, 'name email createdAt role isAdmin isSuperAdmin')
+        const customers = await User.find(
+            customerOnlyFilter,
+            'name email fullName mobileNumber address city state pincode gender country createdAt updatedAt role isAdmin isSuperAdmin'
+        )
             .sort({ createdAt: -1 })
             .limit(1000)
             .lean();
@@ -295,7 +298,16 @@ exports.getAdminCustomers = async (req, res) => {
                 id: item._id,
                 username: item.name,
                 email: item.email,
+                fullName: item.fullName || '',
+                mobileNumber: item.mobileNumber || '',
+                address: item.address || '',
+                city: item.city || '',
+                state: item.state || '',
+                pincode: item.pincode || '',
+                gender: item.gender || '',
+                country: item.country || '',
                 createdAt: item.createdAt,
+                updatedAt: item.updatedAt,
             }))
         );
     } catch (error) {
