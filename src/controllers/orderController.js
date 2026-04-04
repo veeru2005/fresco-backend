@@ -6,7 +6,12 @@ const mongoose = require('mongoose');
 const { isAdminRole } = require('../middleware/auth');
 const { evaluateOrderPricing } = require('../services/offers');
 const { sendOrderCreatedEmailNotifications } = require('../services/brevoEmail');
-const { DEFAULT_UNIT, getProductPricingOptions, getSelectedPricingOption } = require('../services/pricing');
+const {
+    DEFAULT_UNIT,
+    getProductPricingOptions,
+    getSelectedPricingOption,
+    normalizeUnitLabel,
+} = require('../services/pricing');
 
 const statusMap = {
     pending: 'BOOKING_CONFIRMED',
@@ -59,6 +64,46 @@ const cleanAdminAddress = (address, country) => {
     return normalizedAddress;
 };
 
+const findPricingOptionByPrice = (options, unitPrice) => {
+    const normalizedPrice = Number(unitPrice);
+    if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) return null;
+
+    return (
+        (Array.isArray(options) ? options : []).find(
+            (option) => Number(option?.price || 0) === normalizedPrice
+        ) || null
+    );
+};
+
+const hasPricingOptionForUnit = (options, unit) =>
+    Boolean((Array.isArray(options) ? options : []).find((option) => option?.unit === unit));
+
+const resolveOrderedItemUnit = (item) => {
+    const productDoc = item?.product || {};
+    const pricingOptions = getProductPricingOptions(productDoc);
+    const savedUnit = normalizeUnitLabel(item?.unit, '');
+    const productUnit = normalizeUnitLabel(productDoc?.unit, '');
+    const matchedByPrice = findPricingOptionByPrice(pricingOptions, item?.unitPrice);
+
+    if (savedUnit && savedUnit !== DEFAULT_UNIT) {
+        return savedUnit;
+    }
+
+    if (matchedByPrice?.unit && (!savedUnit || matchedByPrice.unit !== savedUnit)) {
+        return matchedByPrice.unit;
+    }
+
+    if (savedUnit && savedUnit === DEFAULT_UNIT && hasPricingOptionForUnit(pricingOptions, savedUnit)) {
+        return savedUnit;
+    }
+
+    if (productUnit) {
+        return productUnit;
+    }
+
+    return savedUnit || DEFAULT_UNIT;
+};
+
 const toLegacyOrder = (orderDoc) => {
     const userProfile = orderDoc?.user || {};
     const userCity = String(userProfile.city || '').trim();
@@ -74,7 +119,7 @@ const toLegacyOrder = (orderDoc) => {
             .map((item) => {
                 const quantity = Math.max(1, Number(item?.quantity || 1));
                 const unitPrice = Number((item?.unitPrice ?? item?.product?.price) || 0);
-                const unit = String(item?.unit || item?.product?.unit || DEFAULT_UNIT);
+                const unit = resolveOrderedItemUnit(item);
 
                 return {
                     productId: item?.product?._id || item?.product || null,
@@ -189,13 +234,27 @@ const computeSubtotalFromProducts = async (products) => {
             if (!productDoc) return null;
 
             const pricingOptions = getProductPricingOptions(productDoc);
-            const selectedPricing = getSelectedPricingOption({ pricingOptions, price: productDoc.price, unit: productDoc.unit }, item?.unit);
+            const requestedUnit = normalizeUnitLabel(item?.unit, '');
+            const matchedByPrice = findPricingOptionByPrice(pricingOptions, item?.unitPrice);
+            const fallbackPricing = pricingOptions[0] || null;
+            let selectedPricing =
+                getSelectedPricingOption(
+                    { pricingOptions, price: productDoc.price, unit: productDoc.unit },
+                    requestedUnit
+                ) || fallbackPricing;
+
+            if (
+                matchedByPrice &&
+                (!requestedUnit || requestedUnit === DEFAULT_UNIT || !selectedPricing || selectedPricing.unit === DEFAULT_UNIT)
+            ) {
+                selectedPricing = matchedByPrice;
+            }
 
             return {
                 product: productId,
                 quantity: clampQuantity(item?.quantity),
-                unit: selectedPricing?.unit || DEFAULT_UNIT,
-                unitPrice: Number(selectedPricing?.price || 0),
+                unit: selectedPricing?.unit || fallbackPricing?.unit || DEFAULT_UNIT,
+                unitPrice: Number(selectedPricing?.price || fallbackPricing?.price || 0),
             };
         })
         .filter(Boolean);
