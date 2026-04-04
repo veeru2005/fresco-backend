@@ -43,6 +43,21 @@ const normalizeOrderStatus = (status, orderStatus) => {
     return legacy || undefined;
 };
 
+const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const cleanAdminAddress = (address, country) => {
+    let normalizedAddress = String(address || '').replace(/\s+/g, ' ').trim();
+    if (!normalizedAddress) return '';
+
+    const countryCandidates = [String(country || '').trim(), 'India'].filter(Boolean);
+    countryCandidates.forEach((countryName) => {
+        const countrySuffixPattern = new RegExp(`(?:,|\\||-|\\s)+${escapeRegExp(countryName)}\\s*$`, 'i');
+        normalizedAddress = normalizedAddress.replace(countrySuffixPattern, '').trim();
+    });
+
+    return normalizedAddress;
+};
+
 const toLegacyOrder = (orderDoc) => {
     const userProfile = orderDoc?.user || {};
     const userCity = String(userProfile.city || '').trim();
@@ -101,6 +116,42 @@ const toLegacyOrder = (orderDoc) => {
         startDate: orderDoc.startDate || orderDoc.createdAt,
         endDate: orderDoc.endDate || orderDoc.createdAt,
         deliveredDate: orderDoc.deliveredDate || null,
+    };
+};
+
+const toAdminOrder = (orderDoc) => {
+    const legacyOrder = toLegacyOrder(orderDoc);
+    const cleanedAddress = cleanAdminAddress(legacyOrder.deliveryAddress || legacyOrder.address, legacyOrder.country);
+
+    return {
+        id: legacyOrder.id,
+        orderId: legacyOrder.orderId,
+        productName: legacyOrder.productName,
+        productImage: legacyOrder.productImage,
+        username: legacyOrder.username,
+        fullName: legacyOrder.fullName,
+        mobileNumber: legacyOrder.mobileNumber,
+        gender: legacyOrder.gender,
+        paymentAmount: legacyOrder.paymentAmount,
+        subtotalAmount: legacyOrder.subtotalAmount,
+        deliveryCharge: legacyOrder.deliveryCharge,
+        discountAmount: legacyOrder.discountAmount,
+        appliedOfferType: legacyOrder.appliedOfferType,
+        appliedOfferTitle: legacyOrder.appliedOfferTitle,
+        appliedCouponCode: legacyOrder.appliedCouponCode,
+        bookingDate: legacyOrder.bookingDate,
+        orderStatus: legacyOrder.orderStatus,
+        status: legacyOrder.status,
+        paymentStatus: legacyOrder.paymentStatus,
+        paymentMethod: legacyOrder.paymentMethod,
+        totalAmount: legacyOrder.totalAmount,
+        totalItems: legacyOrder.totalItems,
+        orderedItems: legacyOrder.orderedItems,
+        address: cleanedAddress,
+        deliveryAddress: cleanedAddress,
+        startDate: legacyOrder.startDate,
+        endDate: legacyOrder.endDate,
+        deliveredDate: legacyOrder.deliveredDate,
     };
 };
 
@@ -341,7 +392,7 @@ exports.getAllOrders = async (req, res) => {
             .populate('products.product');
 
         await ensurePublicOrderIds(orders);
-        res.status(200).json(orders.map(toLegacyOrder));
+        res.status(200).json(orders.map(toAdminOrder));
     } catch (error) {
         res.status(500).json({ error: 'Error fetching all orders' });
     }
@@ -387,7 +438,7 @@ exports.updateOrderStatus = async (req, res) => {
             );
         }
         
-        res.status(200).json(toLegacyOrder(order));
+        res.status(200).json(toAdminOrder(order));
     } catch (error) {
         res.status(500).json({ error: 'Error updating order' });
     }
